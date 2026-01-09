@@ -984,9 +984,9 @@ void drawLargeGraph(struct NSinfo *ns) {
 
     // Draw point if valid (non-zero)
     if(*(ns->last10sgv+23-i) != 0) {
-      int x = 24 + i * 12;  // 24 to 300 (24 points, 12px spacing)
+      int x = 26 + (i * 268) / 23;  // 26 to 294 (24 points, evenly spaced within borders)
       int y = 195 - (int)((glk - graphMin) * graphScale);
-      M5.Lcd.fillCircle(x, y, 3, sgvColor);  // Smaller 3px radius circles
+      M5.Lcd.fillCircle(x, y, 3, sgvColor);  // 3px radius circles
     }
   }
 }
