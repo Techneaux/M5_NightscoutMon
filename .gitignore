@@ -30,3 +30,13 @@
 *.exe
 *.out
 *.app
+
+# Personal configuration (contains WiFi passwords, Nightscout tokens)
+M5NS.INI
+M5NS.BAK
+
+# PlatformIO build artifacts
+pio_project/.pio/
+
+# macOS
+.DS_Store
