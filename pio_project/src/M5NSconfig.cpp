@@ -69,7 +69,7 @@ void readConfigFromFlash(tConfig *cfg) {
     cfg->restart_at_logged_errors = prefs.getInt("restart_log_err", 30);
     cfg->snooze_timeout = prefs.getInt("snooze_timeout", 30);
     cfg->alarm_repeat = prefs.getInt("alarm_repeat", 5);
-    cfg->refresh_interval = prefs.getInt("refresh_interval", 305);
+    cfg->refresh_interval = prefs.getInt("refresh_interv", 305);
     cfg->yellow_low = prefs.getFloat("yellow_low", 4.5);
     cfg->yellow_high = prefs.getFloat("yellow_high", 9.0);
     cfg->red_low = prefs.getFloat("red_low", 3.9);

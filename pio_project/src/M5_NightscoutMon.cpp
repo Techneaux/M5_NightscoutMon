@@ -92,8 +92,8 @@ String M5NSversion("2022100201");
 
 // HTTP/Network constants
 static const int HTTP_TIMEOUT_MS = 15000;
-static const int URL_BUFFER_SIZE = 256;
-static const int ERR_WIFI_RECONNECT = -100;
+static const int URL_BUFFER_SIZE = 320;
+static const int WIFI_RECONNECTED = -100;  // Status code for successful WiFi reconnection
 static const int WATCHDOG_TIMEOUT_SEC = 60;
 static const int WIFI_CONNECT_TIMEOUT_MS = 60000;
 
@@ -113,8 +113,7 @@ static inline void safeStrCat(char *dest, const char *src, size_t destSize) {
 static const int LARGE_GRAPH_FRAME_LEFT = 20;
 static const int LARGE_GRAPH_FRAME_RIGHT = 300;
 static const int LARGE_GRAPH_X_START = 26;
-static const int LARGE_GRAPH_X_END = 294;
-static const int LARGE_GRAPH_WIDTH = 268;  // X_END - X_START
+static const int LARGE_GRAPH_WIDTH = 268;  // 294 - 26
 static const int LARGE_GRAPH_Y_TOP = 115;
 static const int LARGE_GRAPH_Y_BOTTOM = 195;
 
@@ -826,7 +825,7 @@ void wifi_connect() {
     Serial.println("WiFi not connected - running in AP/bootstrap mode only");
   } else {
     Serial.print("WiFi connected to SSID ");
-  if (is_task_bootstrapping) {
+    if (is_task_bootstrapping) {
     Serial.println(cfg.deviceName);
     M5.Lcd.print("WiFi SSID: "); M5.Lcd.println(cfg.deviceName);
     Serial.print("SSID Passphrase: "); Serial.println(ssid_passphrase);
@@ -1535,7 +1534,7 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
       delay(WIFI_RETRY_DELAYS[i]);
       if (WiFiMultiple.run() == WL_CONNECTED) {
         Serial.println("WiFi reconnected successfully");
-        err = ERR_WIFI_RECONNECT;
+        err = WIFI_RECONNECTED;
         addErrorLog(err);
         break;
       }
