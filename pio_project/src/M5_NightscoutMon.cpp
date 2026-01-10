@@ -2905,7 +2905,7 @@ void loop() {
       /* if(dispPage==2)
         M5.Lcd.drawLine(osx, osy, 160, 111, TFT_BLACK); // erase seconds hand while updating data
       */
-      if((sensorDifSec>305) && (rcnt>3)) {
+      if((sensorDifSec > cfg.refresh_interval) && (rcnt>3)) {
         rcnt = 0;
         readNightscout(cfg.url, cfg.token, &ns);
         if(rcnt==4) {

@@ -69,6 +69,7 @@ void readConfigFromFlash(tConfig *cfg) {
     cfg->restart_at_logged_errors = prefs.getInt("restart_log_err", 30);
     cfg->snooze_timeout = prefs.getInt("snooze_timeout", 30);
     cfg->alarm_repeat = prefs.getInt("alarm_repeat", 5);
+    cfg->refresh_interval = prefs.getInt("refresh_interval", 305);
     cfg->yellow_low = prefs.getFloat("yellow_low", 4.5);
     cfg->yellow_high = prefs.getFloat("yellow_high", 9.0);
     cfg->red_low = prefs.getFloat("red_low", 3.9);
@@ -151,6 +152,7 @@ void saveConfigToFlash(tConfig *cfg) {
     prefs.putInt("restart_log_err", cfg->restart_at_logged_errors);
     prefs.putInt("snooze_timeout", cfg->snooze_timeout);
     prefs.putInt("alarm_repeat", cfg->alarm_repeat);
+    prefs.putInt("refresh_interv", cfg->refresh_interval);
     prefs.putFloat("yellow_low", cfg->yellow_low);
     prefs.putFloat("yellow_high", cfg->yellow_high);
     prefs.putFloat("red_low", cfg->red_low);
@@ -421,6 +423,16 @@ void readConfiguration(const char *iniFilename, tConfig *cfg) {
   else {
     Serial.println("NO alarm_repeat defined -> repeat alarm every 5 minutes");
     cfg->alarm_repeat = 5;
+  }
+
+  if (ini.getValue("config", "refresh_interval", buffer, bufferLen)) {
+    Serial.print("refresh_interval = ");
+    cfg->refresh_interval = atoi(buffer);
+    Serial.println(cfg->refresh_interval);
+  }
+  else {
+    Serial.println("NO refresh_interval defined -> 305 seconds");
+    cfg->refresh_interval = 305;
   }
 
   if (ini.getValue("config", "developer_mode", buffer, bufferLen)) {
