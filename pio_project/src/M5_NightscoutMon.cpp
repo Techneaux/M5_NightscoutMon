@@ -996,10 +996,12 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
   WiFiClientSecure sclient;
   sclient.setCACert(rootCACertificate);
 
-  char NSurl[128];
+  char NSurl[256];  // Increased buffer size for long URLs with tokens
   int err=0;
   char tmpstr[64];
   bool is_https_Heroku = false;
+  const int MAX_RETRIES = 3;
+  const int RETRY_DELAYS[] = {1000, 2000, 4000};  // Exponential backoff: 1s, 2s, 4s
 
   // http.setReuse(false);
   // if(client) {
@@ -1055,10 +1057,9 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
         Serial.println("http.begin FAILED");
       }
     }
-    // http.connect();
-    // Serial.print("Connected "); Serial.println(http.connected()?"YES":"NO");
-    // http.setConnectTimeout(15000);
-    // http.setTimeout(15000);
+    // Set timeouts to prevent hanging on slow/unresponsive servers
+    http.setConnectTimeout(15000);  // 15 second connection timeout
+    http.setTimeout(15000);          // 15 second read timeout
     
     // Serial.print("[HTTP] GET...\r\n");
     // start connection and send HTTP header
@@ -1068,10 +1069,38 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
     http.collectHeaders(headerKeys, numberOfHeaders);
 
     unsigned long timeInGET;
-    timeInGET = millis();
-    int httpCode = http.GET();
-    timeInGET = millis()-timeInGET;
-    
+    int httpCode = 0;
+
+    // Retry loop with exponential backoff for first query
+    for (int retry = 0; retry < MAX_RETRIES; retry++) {
+      timeInGET = millis();
+      httpCode = http.GET();
+      timeInGET = millis() - timeInGET;
+
+      // Success or non-retryable error (4xx client errors)
+      if (httpCode > 0 || (httpCode >= 400 && httpCode < 500)) {
+        break;
+      }
+
+      // Retryable error (connection failed, timeout, 5xx server errors)
+      if (retry < MAX_RETRIES - 1) {
+        Serial.printf("[HTTP] GET failed with code %d, retry %d/%d after %d ms delay\r\n",
+                      httpCode, retry + 1, MAX_RETRIES, RETRY_DELAYS[retry]);
+        http.end();
+        delay(RETRY_DELAYS[retry]);
+
+        // Re-establish connection for retry
+        if (is_https_Heroku) {
+          http.begin(sclient, NSurl);
+        } else {
+          http.begin(NSurl);
+        }
+        http.setConnectTimeout(15000);
+        http.setTimeout(15000);
+        http.collectHeaders(headerKeys, numberOfHeaders);
+      }
+    }
+
     // httpCode will be negative on error
     if(httpCode > 0) {
       // HTTP header has been send and Server response header has been handled
@@ -1319,21 +1348,50 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
     // http.begin(NSurl, "94:FC:F6:23:6C:37:D5:E7:92:78:3C:0B:5F:AD:0C:E4:9E:FD:9E:A8"); //HTTP
     if( is_https_Heroku ) {
       if(http.begin(sclient, NSurl)) {
-        Serial.println("http.begin propertires HTTPS Heroku OK");
+        Serial.println("http.begin properties HTTPS Heroku OK");
       } else {
-        Serial.println("http.begin propertires HTTPS Heroku FAILED");
+        Serial.println("http.begin properties HTTPS Heroku FAILED");
       }
     } else {
       if(http.begin(NSurl)) {
-        Serial.println("http.begin propertires OK");
+        Serial.println("http.begin properties OK");
       } else {
-        Serial.println("http.begin propertires FAILED");
+        Serial.println("http.begin properties FAILED");
       }
     }
-    // Serial.print("[HTTP] GET properties...\r\n");
-    timeInGET = millis();
-    httpCode = http.GET();
-    timeInGET = millis()-timeInGET;
+    // Set timeouts for second query
+    http.setConnectTimeout(15000);
+    http.setTimeout(15000);
+
+    // Retry loop with exponential backoff for second query
+    for (int retry = 0; retry < MAX_RETRIES; retry++) {
+      timeInGET = millis();
+      httpCode = http.GET();
+      timeInGET = millis() - timeInGET;
+
+      // Success or non-retryable error
+      if (httpCode > 0 || (httpCode >= 400 && httpCode < 500)) {
+        break;
+      }
+
+      // Retryable error
+      if (retry < MAX_RETRIES - 1) {
+        Serial.printf("[HTTP] GET properties failed with code %d, retry %d/%d after %d ms delay\r\n",
+                      httpCode, retry + 1, MAX_RETRIES, RETRY_DELAYS[retry]);
+        http.end();
+        delay(RETRY_DELAYS[retry]);
+
+        // Re-establish connection for retry
+        if (is_https_Heroku) {
+          http.begin(sclient, NSurl);
+        } else {
+          http.begin(NSurl);
+        }
+        http.setConnectTimeout(15000);
+        http.setTimeout(15000);
+      }
+    }
+
     if(httpCode > 0) {
       Serial.printf("[HTTP] GET properties... code: %d after %lu ms\r\n", httpCode, timeInGET);
       if(httpCode == HTTP_CODE_OK) {
@@ -1426,8 +1484,27 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
     }
     http.end();
   } else {
-    // WiFi not connected
-    ESP.restart();
+    // WiFi not connected - try to reconnect before restarting
+    Serial.println("WiFi disconnected, attempting to reconnect...");
+    int reconnectAttempts = 0;
+    const int MAX_RECONNECT_ATTEMPTS = 3;
+
+    while (WiFiMultiple.run() != WL_CONNECTED && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      Serial.printf("WiFi reconnect attempt %d/%d...\n", reconnectAttempts + 1, MAX_RECONNECT_ATTEMPTS);
+      delay(2000);
+      reconnectAttempts++;
+    }
+
+    if (WiFiMultiple.run() == WL_CONNECTED) {
+      Serial.println("WiFi reconnected successfully");
+      // Return error so caller knows to retry
+      err = -100;  // Custom error code for WiFi reconnect
+      addErrorLog(err);
+    } else {
+      Serial.println("WiFi reconnect failed, restarting device...");
+      delay(1000);
+      ESP.restart();
+    }
   }
 
   M5.Lcd.fillRect(icon_xpos[0], icon_ypos[0], 16, 16, BLACK);
