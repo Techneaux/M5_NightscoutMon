@@ -61,6 +61,7 @@
 Adafruit_NeoPixel pixels(10, 15, NEO_GRB + NEO_KHZ800);
 
 #include "Free_Fonts.h"
+#include "FreeSansBold48pt7b.h"
 #include "IniFile.h"
 #include "M5NSconfig.h"
 #include "M5NSWebConfig.h"
@@ -2501,21 +2502,23 @@ void draw_page() {
         sprintf(sensSgvStr, "%4.1f", ns.sensSgv);
       }
 
-      M5.Lcd.setTextSize(2);
+      M5.Lcd.setTextSize(1);  // No scaling - using native 48pt font
       M5.Lcd.setTextDatum(MC_DATUM);
       M5.Lcd.setTextColor(glColor, TFT_BLACK);
-      M5.Lcd.setFreeFont(FSSB24);
+      M5.Lcd.setFreeFont(&FreeSansBold48pt7b);
       M5.Lcd.drawString(sensSgvStr, 100, 55, GFXFF);
 
-      // Draw trend arrow (to the right of glucose)
+      // Draw trend arrow (dynamically positioned based on text width)
+      int tw = M5.Lcd.textWidth(sensSgvStr);
+      int arrowX = 100 + (tw / 2) + 15;
       if(ns.arrowAngle != 180) {
-        drawArrow(185, 55, 10, ns.arrowAngle + 85, 40, 40, glColor);
+        drawArrow(arrowX, 55, 10, ns.arrowAngle + 85, 40, 40, glColor);
       }
 
       // Draw delta value (right-aligned to graph edge)
       M5.Lcd.setTextSize(1);
       M5.Lcd.setTextDatum(TR_DATUM);  // Top-Right alignment
-      M5.Lcd.setFreeFont(FSSB18);
+      M5.Lcd.setFreeFont(FSSB18);  // FreeSansBold for consistency with glucose
       M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
       M5.Lcd.drawString(ns.delta_display, 300, 40, GFXFF);
 
