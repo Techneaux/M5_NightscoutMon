@@ -64,8 +64,10 @@ restart_at_logged_errors = 0        ; restart device after particular number of 
                                     ; (0 = do not restart)
 show_COB_IOB = 1                    ; show COB and IOB, values are grayed out if COB/IOB value is 0
 snooze_timeout = 30                 ; sound snooze time in minutes after press of the middle button
-alarm_repeat = 5                    ; sound repeat interval in minutes (alarm repeats only if alarm/warning 
+alarm_repeat = 5                    ; sound repeat interval in minutes (alarm repeats only if alarm/warning
                                     ; conditions are met)
+refresh_interval = 305              ; seconds until data is considered stale and re-fetched from Nightscout
+                                    ; lower values poll earlier, higher values wait longer (default 305)
 info_line = 1                       ; 0 = sensor info, 1 = button function icons, 
                                     ; 2 = loop info (Loop) + basal, 3 = OpenAPS loop info + basal
 temperature_unit = 1                ; 1 = CELSIUS, 2 = KELVIN, 3 = FAHRENHEIT. Can be omitted (default Celsius).

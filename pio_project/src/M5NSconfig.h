@@ -26,6 +26,7 @@ struct tConfig {
   int show_COB_IOB = 0; // show COB and IOB, values are grayed out if COB/IOB value is 0
   int snooze_timeout = 30; // timeout to snooze alarm in minutes
   int alarm_repeat = 5; // repeat alarm every X minutes
+  int refresh_interval = 305; // seconds until data considered stale and re-fetched from Nightscout
   float yellow_low = 4.5;
   float yellow_high = 9;
   float red_low = 3.9;

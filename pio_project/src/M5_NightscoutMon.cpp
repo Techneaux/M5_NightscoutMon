@@ -55,6 +55,7 @@
 #define ARDUINOJSON_USE_LONG_LONG 1
 #include <ArduinoJson.h>
 #include "soc/rtc_io_reg.h"
+#include "esp_task_wdt.h"
 
 #include <Adafruit_NeoPixel.h>
 Adafruit_NeoPixel pixels(10, 15, NEO_GRB + NEO_KHZ800);
@@ -88,6 +89,33 @@ String M5NSversion("2022100201");
 #define VIBfreq 10000
 #define VIBchannel 14
 #define VIBresolution 10
+
+// HTTP/Network constants
+static const int HTTP_TIMEOUT_MS = 15000;
+static const int URL_BUFFER_SIZE = 320;
+static const int WIFI_RECONNECTED = -100;  // Status code for successful WiFi reconnection
+static const int WATCHDOG_TIMEOUT_SEC = 60;
+static const int WIFI_CONNECT_TIMEOUT_MS = 60000;
+
+// Retry configuration
+static const int MAX_RETRIES = 3;
+static const int RETRY_DELAYS[] = {1000, 2000, 4000};  // Exponential backoff: 1s, 2s, 4s
+
+// Safe string append helper - prevents buffer overflow
+static inline void safeStrCat(char *dest, const char *src, size_t destSize) {
+  size_t destLen = strlen(dest);
+  if (destLen < destSize - 1) {
+    strncat(dest, src, destSize - destLen - 1);
+  }
+}
+
+// Large graph constants (page 3)
+static const int LARGE_GRAPH_FRAME_LEFT = 20;
+static const int LARGE_GRAPH_FRAME_RIGHT = 300;
+static const int LARGE_GRAPH_X_START = 26;
+static const int LARGE_GRAPH_WIDTH = 268;  // 294 - 26
+static const int LARGE_GRAPH_Y_TOP = 115;
+static const int LARGE_GRAPH_Y_BOTTOM = 195;
 
 // The UDP library class
 WiFiUDP udp;
@@ -772,7 +800,19 @@ void wifi_connect() {
     Serial.print("Wait for WiFi... ");
     M5.Lcd.print("Wait for WiFi... ");
 
+    unsigned long wifiStartTime = millis();
     while(WiFiMultiple.run() != WL_CONNECTED) {
+        esp_task_wdt_reset();  // Feed watchdog during WiFi connection
+        if (millis() - wifiStartTime > WIFI_CONNECT_TIMEOUT_MS) {
+          Serial.println("\nWiFi connection timeout!");
+          M5.Lcd.println("\nWiFi timeout - check settings");
+          // Continue with bootstrap/AP mode if available, otherwise restart
+          if (!is_task_bootstrapping) {
+            delay(3000);
+            ESP.restart();
+          }
+          break;
+        }
         Serial.print(".");
         M5.Lcd.print(".");
         delay(500);
@@ -781,8 +821,11 @@ void wifi_connect() {
 
   Serial.println("");
   M5.Lcd.println("");
-  Serial.print("WiFi connected to SSID ");
-  if (is_task_bootstrapping) {
+  if (WiFiMultiple.run() != WL_CONNECTED) {
+    Serial.println("WiFi not connected - running in AP/bootstrap mode only");
+  } else {
+    Serial.print("WiFi connected to SSID ");
+    if (is_task_bootstrapping) {
     Serial.println(cfg.deviceName);
     M5.Lcd.print("WiFi SSID: "); M5.Lcd.println(cfg.deviceName);
     Serial.print("SSID Passphrase: "); Serial.println(ssid_passphrase);
@@ -820,6 +863,7 @@ void wifi_connect() {
     Serial.println("Connection done");
     M5.Lcd.println("Connection done");
   }
+  }  // End of WiFi connected else block
 
 }
 
@@ -944,7 +988,7 @@ void drawLargeGraph(struct NSinfo *ns) {
   float glk;
   uint16_t sgvColor;
 
-  // Graph dimensions: x=20 to x=300 (280px wide), y=115 to y=195 (80px tall)
+  // Graph dimensions defined by LARGE_GRAPH_* constants
   // Range: 40-400 mg/dL = 2.22-22.22 mmol/L (20 mmol/L span)
   // Scale: 80px / 20 mmol/L = 4.0 px per mmol/L
   const float graphMin = 2.22;   // 40 mg/dL
@@ -952,18 +996,18 @@ void drawLargeGraph(struct NSinfo *ns) {
   const float graphScale = 4.0;  // pixels per mmol/L
 
   // Draw frame lines
-  M5.Lcd.drawLine(20, 115, 300, 115, TFT_LIGHTGREY);   // top
-  M5.Lcd.drawLine(20, 195, 300, 195, TFT_LIGHTGREY);   // bottom
-  M5.Lcd.drawLine(20, 115, 20, 195, TFT_DARKGREY);     // left
-  M5.Lcd.drawLine(300, 115, 300, 195, TFT_DARKGREY);   // right
+  M5.Lcd.drawLine(LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_TOP, LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_TOP, TFT_LIGHTGREY);      // top
+  M5.Lcd.drawLine(LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_BOTTOM, LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_BOTTOM, TFT_LIGHTGREY); // bottom
+  M5.Lcd.drawLine(LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_TOP, LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_BOTTOM, TFT_DARKGREY);      // left
+  M5.Lcd.drawLine(LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_TOP, LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_BOTTOM, TFT_DARKGREY);    // right
 
   // Draw threshold reference lines
-  int y_low = 195 - (int)((cfg.yellow_low - graphMin) * graphScale);
-  int y_high = 195 - (int)((cfg.yellow_high - graphMin) * graphScale);
-  if(y_low >= 115 && y_low <= 195) M5.Lcd.drawLine(20, y_low, 300, y_low, TFT_DARKGREY);
-  if(y_high >= 115 && y_high <= 195) M5.Lcd.drawLine(20, y_high, 300, y_high, TFT_DARKGREY);
+  int y_low = LARGE_GRAPH_Y_BOTTOM - (int)((cfg.yellow_low - graphMin) * graphScale);
+  int y_high = LARGE_GRAPH_Y_BOTTOM - (int)((cfg.yellow_high - graphMin) * graphScale);
+  if(y_low >= LARGE_GRAPH_Y_TOP && y_low <= LARGE_GRAPH_Y_BOTTOM) M5.Lcd.drawLine(LARGE_GRAPH_FRAME_LEFT, y_low, LARGE_GRAPH_FRAME_RIGHT, y_low, TFT_DARKGREY);
+  if(y_high >= LARGE_GRAPH_Y_TOP && y_high <= LARGE_GRAPH_Y_BOTTOM) M5.Lcd.drawLine(LARGE_GRAPH_FRAME_LEFT, y_high, LARGE_GRAPH_FRAME_RIGHT, y_high, TFT_DARKGREY);
 
-  // Draw data points - 24 points (2 hours) spread across 280px = ~11.5px spacing
+  // Draw data points - 24 points (2 hours) spread across graph width
   for(i=23; i>=0; i--) {
     sgvColor = TFT_GREEN;
     glk = *(ns->last10sgv+23-i);
@@ -984,11 +1028,61 @@ void drawLargeGraph(struct NSinfo *ns) {
 
     // Draw point if valid (non-zero)
     if(*(ns->last10sgv+23-i) != 0) {
-      int x = 26 + (i * 268) / 23;  // 26 to 294 (24 points, evenly spaced within borders)
-      int y = 195 - (int)((glk - graphMin) * graphScale);
+      int x = LARGE_GRAPH_X_START + (i * LARGE_GRAPH_WIDTH) / 23;  // evenly spaced within borders
+      int y = LARGE_GRAPH_Y_BOTTOM - (int)((glk - graphMin) * graphScale);
       M5.Lcd.fillCircle(x, y, 3, sgvColor);  // 3px radius circles
     }
   }
+}
+
+/**
+ * Perform HTTP GET with retry and exponential backoff
+ *
+ * @param http        HTTPClient reference
+ * @param sclient     WiFiClientSecure reference for HTTPS
+ * @param url         URL to fetch
+ * @param is_https    Whether to use secure client
+ * @param requestName Name for logging (e.g., "GET", "GET properties")
+ * @param headerKeys  Optional array of header keys to collect (NULL to skip)
+ * @param numHeaders  Number of headers to collect (0 to skip)
+ * @return HTTP response code (positive on success, negative on error)
+ */
+int httpGetWithRetry(HTTPClient &http, WiFiClientSecure &sclient,
+                     const char *url, bool is_https, const char *requestName,
+                     const char *headerKeys[] = NULL, int numHeaders = 0) {
+  int httpCode = 0;
+
+  for (int retry = 0; retry < MAX_RETRIES; retry++) {
+    esp_task_wdt_reset();  // Feed watchdog during long HTTP operations
+    httpCode = http.GET();
+
+    // Success or non-retryable error (4xx client errors)
+    if (httpCode > 0 || (httpCode >= 400 && httpCode < 500)) {
+      break;
+    }
+
+    // Retryable error - log and backoff
+    if (retry < MAX_RETRIES - 1) {
+      Serial.printf("[HTTP] %s failed with code %d, retry %d/%d after %d ms delay\r\n",
+                    requestName, httpCode, retry + 1, MAX_RETRIES, RETRY_DELAYS[retry]);
+      http.end();
+      delay(RETRY_DELAYS[retry]);
+
+      // Re-establish connection
+      if (is_https) {
+        http.begin(sclient, url);
+      } else {
+        http.begin(url);
+      }
+      http.setConnectTimeout(HTTP_TIMEOUT_MS);
+      http.setTimeout(HTTP_TIMEOUT_MS);
+      if (headerKeys != NULL && numHeaders > 0) {
+        http.collectHeaders(headerKeys, numHeaders);
+      }
+    }
+  }
+
+  return httpCode;
 }
 
 int readNightscout(char *url, char *token, struct NSinfo *ns) {
@@ -996,12 +1090,10 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
   WiFiClientSecure sclient;
   sclient.setCACert(rootCACertificate);
 
-  char NSurl[256];  // Increased buffer size for long URLs with tokens
+  char NSurl[URL_BUFFER_SIZE];  // Buffer for URLs with tokens
   int err=0;
   char tmpstr[64];
   bool is_https_Heroku = false;
-  const int MAX_RETRIES = 3;
-  const int RETRY_DELAYS[] = {1000, 2000, 4000};  // Exponential backoff: 1s, 2s, 4s
 
   // http.setReuse(false);
   // if(client) {
@@ -1010,12 +1102,12 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
   //}
   
   if((WiFiMultiple.run() == WL_CONNECTED)) {
-    // configure target server and url
+    // configure target server and url (using safe string operations)
     if(strncmp(url, "http", 4))
       strcpy(NSurl,"https://");
     else
       strcpy(NSurl,"");
-    strcat(NSurl,url);
+    safeStrCat(NSurl, url, URL_BUFFER_SIZE);
     if(strlen(NSurl)>0) {
       if(NSurl[strlen(NSurl)-1]=='/') {
         NSurl[strlen(NSurl)-1]=0;
@@ -1029,13 +1121,13 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
       is_https_Heroku = (strstr(NSurl,"https://") != NULL) && (strstr(NSurl,"herokuapp.com") != NULL);
       Serial.print("is_https_Heroku "); Serial.println(is_https_Heroku);
       if(cfg.sgv_only) {
-        strcat(NSurl,"/api/v1/entries.json?find[type][$eq]=sgv&count=24");
+        safeStrCat(NSurl, "/api/v1/entries.json?find[type][$eq]=sgv&count=24", URL_BUFFER_SIZE);
       } else {
-        strcat(NSurl,"/api/v1/entries.json?count=24");
+        safeStrCat(NSurl, "/api/v1/entries.json?count=24", URL_BUFFER_SIZE);
       }
       if ((token!=NULL) && (strlen(token)>0)) {
-        strcat(NSurl,"&token=");
-        strcat(NSurl,token);
+        safeStrCat(NSurl, "&token=", URL_BUFFER_SIZE);
+        safeStrCat(NSurl, token, URL_BUFFER_SIZE);
       }
     }
   
@@ -1044,62 +1136,32 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
     
     Serial.print("JSON query NSurl = \'");Serial.print(NSurl);Serial.print("\'\r\n");
     // http.begin(NSurl, "94:FC:F6:23:6C:37:D5:E7:92:78:3C:0B:5F:AD:0C:E4:9E:FD:9E:A8"); //HTTP
+    bool httpBeginOk = false;
     if( is_https_Heroku ) {
-      if(http.begin(sclient, NSurl)) {
-        Serial.println("http.begin HTTPS Heroku OK");
-      } else {
-        Serial.println("http.begin HTTPS Heroku FAILED");
-      }
+      httpBeginOk = http.begin(sclient, NSurl);
+      Serial.println(httpBeginOk ? "http.begin HTTPS Heroku OK" : "http.begin HTTPS Heroku FAILED");
     } else {
-      if(http.begin(NSurl)) {
-        Serial.println("http.begin OK");
-      } else {
-        Serial.println("http.begin FAILED");
-      }
+      httpBeginOk = http.begin(NSurl);
+      Serial.println(httpBeginOk ? "http.begin OK" : "http.begin FAILED");
+    }
+    if (!httpBeginOk) {
+      addErrorLog(-1);  // Log connection setup failure
+      return -1;        // Return error instead of continuing
     }
     // Set timeouts to prevent hanging on slow/unresponsive servers
-    http.setConnectTimeout(15000);  // 15 second connection timeout
-    http.setTimeout(15000);          // 15 second read timeout
-    
+    http.setConnectTimeout(HTTP_TIMEOUT_MS);
+    http.setTimeout(HTTP_TIMEOUT_MS);
+
     // Serial.print("[HTTP] GET...\r\n");
     // start connection and send HTTP header
-    
+
     const char * headerKeys[] = {"date", "server", "location"};
     const size_t numberOfHeaders = 3;
     http.collectHeaders(headerKeys, numberOfHeaders);
 
-    unsigned long timeInGET;
-    int httpCode = 0;
-
-    // Retry loop with exponential backoff for first query
-    for (int retry = 0; retry < MAX_RETRIES; retry++) {
-      timeInGET = millis();
-      httpCode = http.GET();
-      timeInGET = millis() - timeInGET;
-
-      // Success or non-retryable error (4xx client errors)
-      if (httpCode > 0 || (httpCode >= 400 && httpCode < 500)) {
-        break;
-      }
-
-      // Retryable error (connection failed, timeout, 5xx server errors)
-      if (retry < MAX_RETRIES - 1) {
-        Serial.printf("[HTTP] GET failed with code %d, retry %d/%d after %d ms delay\r\n",
-                      httpCode, retry + 1, MAX_RETRIES, RETRY_DELAYS[retry]);
-        http.end();
-        delay(RETRY_DELAYS[retry]);
-
-        // Re-establish connection for retry
-        if (is_https_Heroku) {
-          http.begin(sclient, NSurl);
-        } else {
-          http.begin(NSurl);
-        }
-        http.setConnectTimeout(15000);
-        http.setTimeout(15000);
-        http.collectHeaders(headerKeys, numberOfHeaders);
-      }
-    }
+    unsigned long timeInGET = millis();
+    int httpCode = httpGetWithRetry(http, sclient, NSurl, is_https_Heroku, "GET", headerKeys, numberOfHeaders);
+    timeInGET = millis() - timeInGET;
 
     // httpCode will be negative on error
     if(httpCode > 0) {
@@ -1314,12 +1376,12 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
     if(ns->is_Sugarmate)
       return 0; // no second query if using Sugarmate
       
-    // the second query 
+    // the second query (using safe string operations)
     if(strncmp(url, "http", 4))
       strcpy(NSurl,"https://");
     else
       strcpy(NSurl,"");
-    strcat(NSurl,url);
+    safeStrCat(NSurl, url, URL_BUFFER_SIZE);
     if(strlen(NSurl)>0) {
       if(NSurl[strlen(NSurl)-1]=='/') {
         NSurl[strlen(NSurl)-1]=0;
@@ -1327,18 +1389,18 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
     }
     switch(cfg.info_line) {
       case 2:
-        strcat(NSurl,"/api/v2/properties/iob,cob,delta,loop,basal");
+        safeStrCat(NSurl, "/api/v2/properties/iob,cob,delta,loop,basal", URL_BUFFER_SIZE);
         break;
       case 3:
-        strcat(NSurl,"/api/v2/properties/iob,cob,delta,openaps,basal");
+        safeStrCat(NSurl, "/api/v2/properties/iob,cob,delta,openaps,basal", URL_BUFFER_SIZE);
         break;
       default:
-        strcat(NSurl,"/api/v2/properties/iob,cob,delta,basal");
+        safeStrCat(NSurl, "/api/v2/properties/iob,cob,delta,basal", URL_BUFFER_SIZE);
     }
-    
+
     if (strlen(token) > 0){
-      strcat(NSurl,"?token=");
-      strcat(NSurl,token);
+      safeStrCat(NSurl, "?token=", URL_BUFFER_SIZE);
+      safeStrCat(NSurl, token, URL_BUFFER_SIZE);
     }
     
     M5.Lcd.fillRect(icon_xpos[0], icon_ypos[0], 16, 16, BLACK);
@@ -1346,51 +1408,26 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
 
     Serial.print("Properties query NSurl = \'");Serial.print(NSurl);Serial.print("\'\r\n");
     // http.begin(NSurl, "94:FC:F6:23:6C:37:D5:E7:92:78:3C:0B:5F:AD:0C:E4:9E:FD:9E:A8"); //HTTP
+    httpBeginOk = false;
     if( is_https_Heroku ) {
-      if(http.begin(sclient, NSurl)) {
-        Serial.println("http.begin properties HTTPS Heroku OK");
-      } else {
-        Serial.println("http.begin properties HTTPS Heroku FAILED");
-      }
+      httpBeginOk = http.begin(sclient, NSurl);
+      Serial.println(httpBeginOk ? "http.begin properties HTTPS Heroku OK" : "http.begin properties HTTPS Heroku FAILED");
     } else {
-      if(http.begin(NSurl)) {
-        Serial.println("http.begin properties OK");
-      } else {
-        Serial.println("http.begin properties FAILED");
-      }
+      httpBeginOk = http.begin(NSurl);
+      Serial.println(httpBeginOk ? "http.begin properties OK" : "http.begin properties FAILED");
     }
-    // Set timeouts for second query
-    http.setConnectTimeout(15000);
-    http.setTimeout(15000);
+    if (!httpBeginOk) {
+      addErrorLog(-1);  // Log connection setup failure
+      // Don't return here - first query already succeeded, just skip properties
+      Serial.println("Skipping properties query due to http.begin failure");
+    } else {
+      // Set timeouts for second query
+      http.setConnectTimeout(HTTP_TIMEOUT_MS);
+      http.setTimeout(HTTP_TIMEOUT_MS);
 
-    // Retry loop with exponential backoff for second query
-    for (int retry = 0; retry < MAX_RETRIES; retry++) {
       timeInGET = millis();
-      httpCode = http.GET();
-      timeInGET = millis() - timeInGET;
-
-      // Success or non-retryable error
-      if (httpCode > 0 || (httpCode >= 400 && httpCode < 500)) {
-        break;
-      }
-
-      // Retryable error
-      if (retry < MAX_RETRIES - 1) {
-        Serial.printf("[HTTP] GET properties failed with code %d, retry %d/%d after %d ms delay\r\n",
-                      httpCode, retry + 1, MAX_RETRIES, RETRY_DELAYS[retry]);
-        http.end();
-        delay(RETRY_DELAYS[retry]);
-
-        // Re-establish connection for retry
-        if (is_https_Heroku) {
-          http.begin(sclient, NSurl);
-        } else {
-          http.begin(NSurl);
-        }
-        http.setConnectTimeout(15000);
-        http.setTimeout(15000);
-      }
-    }
+    httpCode = httpGetWithRetry(http, sclient, NSurl, is_https_Heroku, "GET properties");
+    timeInGET = millis() - timeInGET;
 
     if(httpCode > 0) {
       Serial.printf("[HTTP] GET properties... code: %d after %lu ms\r\n", httpCode, timeInGET);
@@ -1482,26 +1519,29 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
       addErrorLog(httpCode);
       err=httpCode;
     }
+    }  // End of httpBeginOk else block for properties query
     http.end();
   } else {
-    // WiFi not connected - try to reconnect before restarting
+    // WiFi not connected - try to reconnect with exponential backoff before restarting
     Serial.println("WiFi disconnected, attempting to reconnect...");
-    int reconnectAttempts = 0;
-    const int MAX_RECONNECT_ATTEMPTS = 3;
+    const int WIFI_RETRY_DELAYS[] = {1000, 2000, 4000, 8000, 16000};  // 31 seconds total
+    const int MAX_WIFI_RETRIES = sizeof(WIFI_RETRY_DELAYS) / sizeof(WIFI_RETRY_DELAYS[0]);
 
-    while (WiFiMultiple.run() != WL_CONNECTED && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-      Serial.printf("WiFi reconnect attempt %d/%d...\n", reconnectAttempts + 1, MAX_RECONNECT_ATTEMPTS);
-      delay(2000);
-      reconnectAttempts++;
+    for (int i = 0; i < MAX_WIFI_RETRIES; i++) {
+      esp_task_wdt_reset();  // Feed watchdog during reconnection
+      Serial.printf("WiFi reconnect attempt %d/%d (delay %dms)...\n",
+                    i + 1, MAX_WIFI_RETRIES, WIFI_RETRY_DELAYS[i]);
+      delay(WIFI_RETRY_DELAYS[i]);
+      if (WiFiMultiple.run() == WL_CONNECTED) {
+        Serial.println("WiFi reconnected successfully");
+        err = WIFI_RECONNECTED;
+        addErrorLog(err);
+        break;
+      }
     }
 
-    if (WiFiMultiple.run() == WL_CONNECTED) {
-      Serial.println("WiFi reconnected successfully");
-      // Return error so caller knows to retry
-      err = -100;  // Custom error code for WiFi reconnect
-      addErrorLog(err);
-    } else {
-      Serial.println("WiFi reconnect failed, restarting device...");
+    if (WiFiMultiple.run() != WL_CONNECTED) {
+      Serial.println("WiFi reconnect failed after all retries, restarting device...");
       delay(1000);
       ESP.restart();
     }
@@ -2589,6 +2629,10 @@ void setup() {
       M5.Power.begin();
     #endif
 
+    // Initialize watchdog timer for crash recovery
+    esp_task_wdt_init(WATCHDOG_TIMEOUT_SEC, true);  // timeout in seconds, panic on timeout
+    esp_task_wdt_add(NULL);  // Add current task to watchdog
+
     // prevent button A "ghost" random presses on older versions
     Wire.begin();
     
@@ -2838,6 +2882,8 @@ void setup() {
 
 // the loop routine runs over and over again forever
 void loop() {
+  esp_task_wdt_reset();  // Feed the watchdog
+
   if(!cfg.disable_web_server || is_task_bootstrapping) {
     dnsServer.processNextRequest();
     w3srv.handleClient();
@@ -2858,7 +2904,7 @@ void loop() {
       /* if(dispPage==2)
         M5.Lcd.drawLine(osx, osy, 160, 111, TFT_BLACK); // erase seconds hand while updating data
       */
-      if((sensorDifSec>305) && (rcnt>3)) {
+      if((sensorDifSec > cfg.refresh_interval) && (rcnt>3)) {
         rcnt = 0;
         readNightscout(cfg.url, cfg.token, &ns);
         if(rcnt==4) {
