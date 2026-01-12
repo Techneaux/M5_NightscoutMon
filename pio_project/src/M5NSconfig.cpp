@@ -88,6 +88,7 @@ void readConfigFromFlash(tConfig *cfg) {
     cfg->brightness1 = prefs.getInt("brightness1", 50);
     cfg->brightness2 = prefs.getInt("brightness2", 100);
     cfg->brightness3 = prefs.getInt("brightness3", 10);
+    cfg->auto_brightness = prefs.getInt("auto_bright", 0);
     cfg->brightness_day = prefs.getInt("bright_day", 50);
     cfg->brightness_night = prefs.getInt("bright_night", 10);
     cfg->day_start_hour = prefs.getInt("day_start_hr", 7);
@@ -176,6 +177,7 @@ void saveConfigToFlash(tConfig *cfg) {
     prefs.putInt("brightness1", cfg->brightness1);
     prefs.putInt("brightness2", cfg->brightness2);
     prefs.putInt("brightness3", cfg->brightness3);
+    prefs.putInt("auto_bright", cfg->auto_brightness);
     prefs.putInt("bright_day", cfg->brightness_day);
     prefs.putInt("bright_night", cfg->brightness_night);
     prefs.putInt("day_start_hr", cfg->day_start_hour);
@@ -754,6 +756,16 @@ void readConfiguration(const char *iniFilename, tConfig *cfg) {
   else {
     Serial.println("NO brightness3");
     cfg->brightness3 = 10;
+  }
+
+  if (ini.getValue("config", "auto_brightness", buffer, bufferLen)) {
+    Serial.print("auto_brightness = ");
+    cfg->auto_brightness = atoi(buffer);
+    Serial.println(cfg->auto_brightness);
+  }
+  else {
+    Serial.println("NO auto_brightness -> default 0 (disabled)");
+    cfg->auto_brightness = 0;
   }
 
   if (ini.getValue("config", "brightness_day", buffer, bufferLen)) {

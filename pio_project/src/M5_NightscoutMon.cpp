@@ -314,6 +314,10 @@ bool isCurrentlyDay(int currentHour) {
 // Update brightness based on day/night mode
 // Only updates if brightness hasn't been manually changed
 void updateDayNightBrightness() {
+  if(!cfg.auto_brightness) {
+    return; // Feature disabled
+  }
+
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)) {
     return; // Can't get time, don't change anything
