@@ -2939,9 +2939,6 @@ void loop() {
   }
   delay(20); // was 10
   if (!is_task_bootstrapping) {
-    // Check and update brightness based on day/night mode
-    updateDayNightBrightness();
-
     buttons_test();
 
     // update glycemia every 15s, fetch new data and draw page
@@ -2953,6 +2950,9 @@ void loop() {
     }
     // Serial.printf("sensorDifSec = %d\r\n", sensorDifSec);
     if(millis()-msCount>15000) {
+      // Check and update brightness based on day/night mode (every 15s)
+      updateDayNightBrightness();
+
       /* if(dispPage==2)
         M5.Lcd.drawLine(osx, osy, 160, 111, TFT_BLACK); // erase seconds hand while updating data
       */
