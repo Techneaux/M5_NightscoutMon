@@ -224,6 +224,8 @@ unsigned long msCount;
 // unsigned long msCountLog;
 unsigned long msStart;
 uint8_t lcdBrightness = 10;
+bool isDayMode = true; // Track current day/night mode for brightness switching
+bool brightnessManuallySet = false; // Track if user manually changed brightness
 const char iniFilename[] = "/M5NS.INI";
 
 DynamicJsonDocument JSONdoc(16384);
@@ -294,7 +296,50 @@ void lcdSetBrightness(uint8_t brightness) {
       M5.Axp.SetLcdVoltage(2500+brightness*8);
   #else
       M5.Lcd.setBrightness(brightness);
-  #endif 
+  #endif
+}
+
+// Check if current hour is during day time
+// Returns true if current hour is between day_start_hour and night_start_hour
+bool isCurrentlyDay(int currentHour) {
+  if(cfg.day_start_hour < cfg.night_start_hour) {
+    // Normal case: day 7-22 means day is hours 7,8,9...21
+    return (currentHour >= cfg.day_start_hour && currentHour < cfg.night_start_hour);
+  } else {
+    // Inverted case: day 22-7 means day is hours 22,23,0,1...6
+    return (currentHour >= cfg.day_start_hour || currentHour < cfg.night_start_hour);
+  }
+}
+
+// Update brightness based on day/night mode
+// Only updates if brightness hasn't been manually changed
+void updateDayNightBrightness() {
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)) {
+    return; // Can't get time, don't change anything
+  }
+
+  bool currentlyDay = isCurrentlyDay(timeinfo.tm_hour);
+
+  // Check if we've transitioned between day and night
+  if(currentlyDay != isDayMode) {
+    isDayMode = currentlyDay;
+    brightnessManuallySet = false; // Reset manual override on day/night transition
+    Serial.printf("Day/night transition: now %s mode\r\n", isDayMode ? "DAY" : "NIGHT");
+  }
+
+  // If brightness was manually set by user, don't auto-adjust
+  if(brightnessManuallySet) {
+    return;
+  }
+
+  // Set appropriate brightness for current mode
+  int targetBrightness = isDayMode ? cfg.brightness_day : cfg.brightness_night;
+  if(lcdBrightness != targetBrightness) {
+    lcdBrightness = targetBrightness;
+    lcdSetBrightness(lcdBrightness);
+    Serial.printf("Auto-set brightness to %d for %s mode\r\n", lcdBrightness, isDayMode ? "day" : "night");
+  }
 }
 
 void addErrorLog(int code){
@@ -577,14 +622,15 @@ void buttons_test() {
     Serial.printf("A");
     // play_tone(1000, 10, 1);
     // sndAlarm();
-    if(lcdBrightness==cfg.brightness1) 
+    if(lcdBrightness==cfg.brightness1)
       lcdBrightness = cfg.brightness2;
     else
-      if(lcdBrightness==cfg.brightness2) 
+      if(lcdBrightness==cfg.brightness2)
         lcdBrightness = cfg.brightness3;
       else
         lcdBrightness = cfg.brightness1;
     lcdSetBrightness(lcdBrightness);
+    brightnessManuallySet = true; // User manually changed brightness, don't auto-adjust
     #ifdef ARDUINO_M5STACK_Core2
       waitBtnRelease();
     #else
@@ -2525,8 +2571,8 @@ void draw_page() {
       // Draw full-width graph
       drawLargeGraph(&ns);
 
-      // Draw stale data banner if >10 minutes since last reading
-      if(sensorDifMin > 10) {
+      // Draw stale data banner if more than configured minutes since last reading
+      if(sensorDifMin > cfg.stale_data_alert_min) {
         M5.Lcd.fillRect(0, 197, 320, 23, TFT_RED);
         M5.Lcd.setTextColor(TFT_WHITE, TFT_RED);
         M5.Lcd.setFreeFont(FSSB12);
@@ -2893,6 +2939,9 @@ void loop() {
   }
   delay(20); // was 10
   if (!is_task_bootstrapping) {
+    // Check and update brightness based on day/night mode
+    updateDayNightBrightness();
+
     buttons_test();
 
     // update glycemia every 15s, fetch new data and draw page

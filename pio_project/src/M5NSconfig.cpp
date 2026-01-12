@@ -88,6 +88,11 @@ void readConfigFromFlash(tConfig *cfg) {
     cfg->brightness1 = prefs.getInt("brightness1", 50);
     cfg->brightness2 = prefs.getInt("brightness2", 100);
     cfg->brightness3 = prefs.getInt("brightness3", 10);
+    cfg->brightness_day = prefs.getInt("bright_day", 50);
+    cfg->brightness_night = prefs.getInt("bright_night", 10);
+    cfg->day_start_hour = prefs.getInt("day_start_hr", 7);
+    cfg->night_start_hour = prefs.getInt("night_start_hr", 22);
+    cfg->stale_data_alert_min = prefs.getInt("stale_alert_min", 10);
     cfg->sgv_only = prefs.getInt("sgv_only", 0);
     cfg->info_line = prefs.getInt("info_line", 1);
     cfg->date_format = prefs.getInt("date_format", 0);
@@ -171,6 +176,11 @@ void saveConfigToFlash(tConfig *cfg) {
     prefs.putInt("brightness1", cfg->brightness1);
     prefs.putInt("brightness2", cfg->brightness2);
     prefs.putInt("brightness3", cfg->brightness3);
+    prefs.putInt("bright_day", cfg->brightness_day);
+    prefs.putInt("bright_night", cfg->brightness_night);
+    prefs.putInt("day_start_hr", cfg->day_start_hour);
+    prefs.putInt("night_start_hr", cfg->night_start_hour);
+    prefs.putInt("stale_alert_min", cfg->stale_data_alert_min);
     prefs.putInt("sgv_only", cfg->sgv_only);
     prefs.putInt("info_line", cfg->info_line);
     prefs.putInt("date_format", cfg->date_format);
@@ -744,6 +754,66 @@ void readConfiguration(const char *iniFilename, tConfig *cfg) {
   else {
     Serial.println("NO brightness3");
     cfg->brightness3 = 10;
+  }
+
+  if (ini.getValue("config", "brightness_day", buffer, bufferLen)) {
+    Serial.print("brightness_day = ");
+    Serial.println(buffer);
+    cfg->brightness_day = atoi(buffer);
+    if(cfg->brightness_day<1 || cfg->brightness_day>100)
+      cfg->brightness_day = 50;
+  }
+  else {
+    Serial.println("NO brightness_day -> default 50");
+    cfg->brightness_day = 50;
+  }
+
+  if (ini.getValue("config", "brightness_night", buffer, bufferLen)) {
+    Serial.print("brightness_night = ");
+    Serial.println(buffer);
+    cfg->brightness_night = atoi(buffer);
+    if(cfg->brightness_night<1 || cfg->brightness_night>100)
+      cfg->brightness_night = 10;
+  }
+  else {
+    Serial.println("NO brightness_night -> default 10");
+    cfg->brightness_night = 10;
+  }
+
+  if (ini.getValue("config", "day_start_hour", buffer, bufferLen)) {
+    Serial.print("day_start_hour = ");
+    cfg->day_start_hour = atoi(buffer);
+    if(cfg->day_start_hour<0 || cfg->day_start_hour>23)
+      cfg->day_start_hour = 7;
+    Serial.println(cfg->day_start_hour);
+  }
+  else {
+    Serial.println("NO day_start_hour -> default 7");
+    cfg->day_start_hour = 7;
+  }
+
+  if (ini.getValue("config", "night_start_hour", buffer, bufferLen)) {
+    Serial.print("night_start_hour = ");
+    cfg->night_start_hour = atoi(buffer);
+    if(cfg->night_start_hour<0 || cfg->night_start_hour>23)
+      cfg->night_start_hour = 22;
+    Serial.println(cfg->night_start_hour);
+  }
+  else {
+    Serial.println("NO night_start_hour -> default 22");
+    cfg->night_start_hour = 22;
+  }
+
+  if (ini.getValue("config", "stale_data_alert_min", buffer, bufferLen)) {
+    Serial.print("stale_data_alert_min = ");
+    cfg->stale_data_alert_min = atoi(buffer);
+    if(cfg->stale_data_alert_min<1)
+      cfg->stale_data_alert_min = 10;
+    Serial.println(cfg->stale_data_alert_min);
+  }
+  else {
+    Serial.println("NO stale_data_alert_min -> default 10 minutes");
+    cfg->stale_data_alert_min = 10;
   }
 
   if (ini.getValue("config", "date_format", buffer, bufferLen)) {
