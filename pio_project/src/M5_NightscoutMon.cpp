@@ -224,6 +224,13 @@ unsigned long msCount;
 // unsigned long msCountLog;
 unsigned long msStart;
 uint8_t lcdBrightness = 10;
+bool isDayMode = true; // Track current day/night mode for brightness switching
+bool brightnessManuallySet = false; // Track if user manually changed brightness
+
+// Sprite for flicker-free page 3 rendering. PSRAM usage depends on TFT_eSprite and board config.
+TFT_eSprite page3Sprite = TFT_eSprite(&M5.Lcd);
+bool page3SpriteCreated = false;
+
 const char iniFilename[] = "/M5NS.INI";
 
 DynamicJsonDocument JSONdoc(16384);
@@ -294,7 +301,58 @@ void lcdSetBrightness(uint8_t brightness) {
       M5.Axp.SetLcdVoltage(2500+brightness*8);
   #else
       M5.Lcd.setBrightness(brightness);
-  #endif 
+  #endif
+}
+
+// Check if current hour is during day time
+// Returns true if current hour is between day_start_hour and night_start_hour
+bool isCurrentlyDay(int currentHour) {
+  // Edge case: if day_start equals night_start, always return true (always day mode)
+  if (cfg.day_start_hour == cfg.night_start_hour) {
+    return true;
+  }
+  if(cfg.day_start_hour < cfg.night_start_hour) {
+    // Normal case: day 7-22 means day is hours 7,8,9...21
+    return (currentHour >= cfg.day_start_hour && currentHour < cfg.night_start_hour);
+  } else {
+    // Inverted case: day 22-7 means day is hours 22,23,0,1...6
+    return (currentHour >= cfg.day_start_hour || currentHour < cfg.night_start_hour);
+  }
+}
+
+// Update brightness based on day/night mode
+// Only updates if brightness hasn't been manually changed
+void updateDayNightBrightness() {
+  if(!cfg.auto_brightness) {
+    return; // Feature disabled
+  }
+
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)) {
+    return; // Can't get time, don't change anything
+  }
+
+  bool currentlyDay = isCurrentlyDay(timeinfo.tm_hour);
+
+  // Check if we've transitioned between day and night
+  if(currentlyDay != isDayMode) {
+    isDayMode = currentlyDay;
+    brightnessManuallySet = false; // Reset manual override on day/night transition
+    Serial.printf("Day/night transition: now %s mode\r\n", isDayMode ? "DAY" : "NIGHT");
+  }
+
+  // If brightness was manually set by user, don't auto-adjust
+  if(brightnessManuallySet) {
+    return;
+  }
+
+  // Set appropriate brightness for current mode
+  int targetBrightness = isDayMode ? cfg.brightness_day : cfg.brightness_night;
+  if(lcdBrightness != targetBrightness) {
+    lcdBrightness = targetBrightness;
+    lcdSetBrightness(lcdBrightness);
+    Serial.printf("Auto-set brightness to %d for %s mode\r\n", lcdBrightness, isDayMode ? "day" : "night");
+  }
 }
 
 void addErrorLog(int code){
@@ -530,12 +588,26 @@ void sndWarning() {
 
 void drawIcon(int16_t x, int16_t y, const uint8_t *bitmap, uint16_t color) {
   int16_t w = 16;
-  int16_t h = 16; 
+  int16_t h = 16;
   int32_t i, j, byteWidth = (w + 7) / 8;
   for (j = 0; j < h; j++) {
     for (i = 0; i < w; i++) {
       if (pgm_read_byte(bitmap + j * byteWidth + i / 8) & (128 >> (i & 7))) {
         M5.Lcd.drawPixel(x + i, y + j, color);
+      }
+    }
+  }
+}
+
+// Sprite version of drawIcon for flicker-free rendering
+void drawIconToSprite(TFT_eSprite* spr, int16_t x, int16_t y, const uint8_t *bitmap, uint16_t color) {
+  int16_t w = 16;
+  int16_t h = 16;
+  int32_t i, j, byteWidth = (w + 7) / 8;
+  for (j = 0; j < h; j++) {
+    for (i = 0; i < w; i++) {
+      if (pgm_read_byte(bitmap + j * byteWidth + i / 8) & (128 >> (i & 7))) {
+        spr->drawPixel(x + i, y + j, color);
       }
     }
   }
@@ -577,14 +649,15 @@ void buttons_test() {
     Serial.printf("A");
     // play_tone(1000, 10, 1);
     // sndAlarm();
-    if(lcdBrightness==cfg.brightness1) 
+    if(lcdBrightness==cfg.brightness1)
       lcdBrightness = cfg.brightness2;
     else
-      if(lcdBrightness==cfg.brightness2) 
+      if(lcdBrightness==cfg.brightness2)
         lcdBrightness = cfg.brightness3;
       else
         lcdBrightness = cfg.brightness1;
     lcdSetBrightness(lcdBrightness);
+    brightnessManuallySet = true; // User manually changed brightness, don't auto-adjust
     #ifdef ARDUINO_M5STACK_Core2
       waitBtnRelease();
     #else
@@ -911,8 +984,8 @@ int8_t getBatteryLevel()
 }
 
 void drawArrow(int x, int y, int asize, int aangle, int pwidth, int plength, uint16_t color){
-  float dx = (asize-10)*cos(aangle-90)*PI/180+x; // calculate X position  
-  float dy = (asize-10)*sin(aangle-90)*PI/180+y; // calculate Y position  
+  float dx = (asize-10)*cos(aangle-90)*PI/180+x; // calculate X position
+  float dy = (asize-10)*sin(aangle-90)*PI/180+y; // calculate Y position
   float x1 = 0;         float y1 = plength;
   float x2 = pwidth/2;  float y2 = pwidth/2;
   float x3 = -pwidth/2; float y3 = pwidth/2;
@@ -933,6 +1006,32 @@ void drawArrow(int x, int y, int asize, int aangle, int pwidth, int plength, uin
   M5.Lcd.drawLine(x, y+2, xx1, yy1+2, color);
   M5.Lcd.drawLine(x-2, y, xx1-2, yy1, color);
   M5.Lcd.drawLine(x, y-2, xx1, yy1-2, color);
+}
+
+// Sprite version of drawArrow for flicker-free rendering
+void drawArrowToSprite(TFT_eSprite* spr, int x, int y, int asize, int aangle, int pwidth, int plength, uint16_t color){
+  float dx = (asize-10)*cos(aangle-90)*PI/180+x;
+  float dy = (asize-10)*sin(aangle-90)*PI/180+y;
+  float x1 = 0;         float y1 = plength;
+  float x2 = pwidth/2;  float y2 = pwidth/2;
+  float x3 = -pwidth/2; float y3 = pwidth/2;
+  float angle = aangle*PI/180-135;
+  float xx1 = x1*cos(angle)-y1*sin(angle)+dx;
+  float yy1 = y1*cos(angle)+x1*sin(angle)+dy;
+  float xx2 = x2*cos(angle)-y2*sin(angle)+dx;
+  float yy2 = y2*cos(angle)+x2*sin(angle)+dy;
+  float xx3 = x3*cos(angle)-y3*sin(angle)+dx;
+  float yy3 = y3*cos(angle)+x3*sin(angle)+dy;
+  spr->fillTriangle(xx1,yy1,xx3,yy3,xx2,yy2, color);
+  spr->drawLine(x, y, xx1, yy1, color);
+  spr->drawLine(x+1, y, xx1+1, yy1, color);
+  spr->drawLine(x, y+1, xx1, yy1+1, color);
+  spr->drawLine(x-1, y, xx1-1, yy1, color);
+  spr->drawLine(x, y-1, xx1, yy1-1, color);
+  spr->drawLine(x+2, y, xx1+2, yy1, color);
+  spr->drawLine(x, y+2, xx1, yy1+2, color);
+  spr->drawLine(x-2, y, xx1-2, yy1, color);
+  spr->drawLine(x, y-2, xx1, yy1-2, color);
 }
 
 void drawMiniGraph(struct NSinfo *ns){
@@ -1032,6 +1131,53 @@ void drawLargeGraph(struct NSinfo *ns) {
       int x = LARGE_GRAPH_X_START + (i * LARGE_GRAPH_WIDTH) / 23;  // evenly spaced within borders
       int y = LARGE_GRAPH_Y_BOTTOM - (int)((glk - graphMin) * graphScale);
       M5.Lcd.fillCircle(x, y, 3, sgvColor);  // 3px radius circles
+    }
+  }
+}
+
+// Sprite version of drawLargeGraph for flicker-free rendering
+void drawLargeGraphToSprite(TFT_eSprite* spr, struct NSinfo *ns) {
+  int i;
+  float glk;
+  uint16_t sgvColor;
+
+  const float graphMin = 2.22;   // 40 mg/dL
+  const float graphMax = 22.22;  // 400 mg/dL
+  const float graphScale = 4.0;  // pixels per mmol/L
+
+  // Draw frame lines
+  spr->drawLine(LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_TOP, LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_TOP, TFT_LIGHTGREY);
+  spr->drawLine(LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_BOTTOM, LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_BOTTOM, TFT_LIGHTGREY);
+  spr->drawLine(LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_TOP, LARGE_GRAPH_FRAME_LEFT, LARGE_GRAPH_Y_BOTTOM, TFT_DARKGREY);
+  spr->drawLine(LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_TOP, LARGE_GRAPH_FRAME_RIGHT, LARGE_GRAPH_Y_BOTTOM, TFT_DARKGREY);
+
+  // Draw threshold reference lines
+  int y_low = LARGE_GRAPH_Y_BOTTOM - (int)((cfg.yellow_low - graphMin) * graphScale);
+  int y_high = LARGE_GRAPH_Y_BOTTOM - (int)((cfg.yellow_high - graphMin) * graphScale);
+  if(y_low >= LARGE_GRAPH_Y_TOP && y_low <= LARGE_GRAPH_Y_BOTTOM) spr->drawLine(LARGE_GRAPH_FRAME_LEFT, y_low, LARGE_GRAPH_FRAME_RIGHT, y_low, TFT_DARKGREY);
+  if(y_high >= LARGE_GRAPH_Y_TOP && y_high <= LARGE_GRAPH_Y_BOTTOM) spr->drawLine(LARGE_GRAPH_FRAME_LEFT, y_high, LARGE_GRAPH_FRAME_RIGHT, y_high, TFT_DARKGREY);
+
+  // Draw data points
+  for(i=23; i>=0; i--) {
+    sgvColor = TFT_GREEN;
+    glk = *(ns->last10sgv+23-i);
+
+    if(glk > graphMax) {
+      glk = graphMax;
+    } else if(glk < graphMin) {
+      glk = graphMin;
+    }
+
+    if(glk < cfg.red_low || glk > cfg.red_high) {
+      sgvColor = TFT_RED;
+    } else if(glk < cfg.yellow_low || glk > cfg.yellow_high) {
+      sgvColor = TFT_YELLOW;
+    }
+
+    if(*(ns->last10sgv+23-i) != 0) {
+      int x = LARGE_GRAPH_X_START + (i * LARGE_GRAPH_WIDTH) / 23;
+      int y = LARGE_GRAPH_Y_BOTTOM - (int)((glk - graphMin) * graphScale);
+      spr->fillCircle(x, y, 3, sgvColor);
     }
   }
 }
@@ -2466,12 +2612,22 @@ void draw_page() {
     break;
 
     case 3: {
-      // Simplified glucose display page
-      // Large centered glucose + trend arrow + delta
-      // Full-width graph
-      // Red stale data banner when >10 min old
+      // Simplified glucose display page with sprite double-buffering
+      // Draws to off-screen sprite then pushes to LCD for flicker-free updates
 
-      M5.Lcd.fillScreen(BLACK);
+      // Fallback if sprite was not created (low memory)
+      if (!page3SpriteCreated) {
+        M5.Lcd.fillScreen(TFT_BLACK);
+        M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5.Lcd.setFreeFont(FSSB12);
+        M5.Lcd.setTextDatum(MC_DATUM);
+        M5.Lcd.drawString("Page 3 unavailable", 160, 100, GFXFF);
+        M5.Lcd.drawString("(low memory)", 160, 130, GFXFF);
+        break;
+      }
+
+      TFT_eSprite* spr = &page3Sprite;
+      spr->fillSprite(TFT_BLACK);  // Clear sprite (not visible yet)
       setPageIconPos(3);
 
       // Calculate time since last reading
@@ -2494,7 +2650,7 @@ void draw_page() {
         glColor = TFT_RED;
       }
 
-      // Draw large centered glucose value
+      // Draw large centered glucose value to sprite
       char sensSgvStr[16];
       if(cfg.show_mgdl) {
         sprintf(sensSgvStr, "%3.0f", ns.sensSgvMgDl);
@@ -2502,44 +2658,76 @@ void draw_page() {
         sprintf(sensSgvStr, "%4.1f", ns.sensSgv);
       }
 
-      M5.Lcd.setTextSize(1);  // No scaling - using native 48pt font
-      M5.Lcd.setTextDatum(MC_DATUM);
-      M5.Lcd.setTextColor(glColor, TFT_BLACK);
-      M5.Lcd.setFreeFont(&FreeSansBold48pt7b);
-      M5.Lcd.drawString(sensSgvStr, 100, 55, GFXFF);
+      spr->setTextSize(1);
+      spr->setTextDatum(MC_DATUM);
+      spr->setTextColor(glColor, TFT_BLACK);
+      spr->setFreeFont(&FreeSansBold48pt7b);
+      spr->drawString(sensSgvStr, 100, 55, GFXFF);
 
-      // Draw trend arrow (dynamically positioned based on text width)
-      int tw = M5.Lcd.textWidth(sensSgvStr);
+      // Draw trend arrow to sprite (dynamically positioned based on text width)
+      int tw = spr->textWidth(sensSgvStr);
       int arrowX = 100 + (tw / 2) + 15;
       if(ns.arrowAngle != 180) {
-        drawArrow(arrowX, 55, 10, ns.arrowAngle + 85, 40, 40, glColor);
+        drawArrowToSprite(spr, arrowX, 55, 10, ns.arrowAngle + 85, 40, 40, glColor);
       }
 
-      // Draw delta value (right-aligned to graph edge)
-      M5.Lcd.setTextSize(1);
-      M5.Lcd.setTextDatum(TR_DATUM);  // Top-Right alignment
-      M5.Lcd.setFreeFont(FSSB18);  // FreeSansBold for consistency with glucose
-      M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-      M5.Lcd.drawString(ns.delta_display, 300, 40, GFXFF);
+      // Draw delta value to sprite (right-aligned to graph edge)
+      spr->setTextSize(1);
+      spr->setTextDatum(TR_DATUM);
+      spr->setFreeFont(FSSB18);
+      spr->setTextColor(TFT_WHITE, TFT_BLACK);
+      spr->drawString(ns.delta_display, 300, 40, GFXFF);
 
-      // Draw full-width graph
-      drawLargeGraph(&ns);
+      // Draw full-width graph to sprite
+      drawLargeGraphToSprite(spr, &ns);
 
-      // Draw stale data banner if >10 minutes since last reading
-      if(sensorDifMin > 10) {
-        M5.Lcd.fillRect(0, 197, 320, 23, TFT_RED);
-        M5.Lcd.setTextColor(TFT_WHITE, TFT_RED);
-        M5.Lcd.setFreeFont(FSSB12);
-        M5.Lcd.setTextDatum(MC_DATUM);
+      // Draw stale data banner to sprite if more than configured minutes since last reading
+      if(sensorDifMin > cfg.stale_data_alert_min) {
+        spr->fillRect(0, 197, 320, 23, TFT_RED);
+        spr->setTextColor(TFT_WHITE, TFT_RED);
+        spr->setFreeFont(FSSB12);
+        spr->setTextDatum(MC_DATUM);
         char staleMsg[32];
-        sprintf(staleMsg, "No data for %d min", sensorDifMin);
-        M5.Lcd.drawString(staleMsg, 160, 208, GFXFF);
+        sprintf(staleMsg, "No data for %u min", sensorDifMin);
+        spr->drawString(staleMsg, 160, 208, GFXFF);
       }
 
-      // Draw status icons and info line
+      // Draw battery status icon to sprite
+      int8_t battLevel = getBatteryLevel();
+      if(battLevel != -1) {
+        spr->fillRect(icon_xpos[2], icon_ypos[2], 16, 17, TFT_BLACK);
+        switch(battLevel) {
+          case 0:
+            drawIconToSprite(spr, icon_xpos[2], icon_ypos[2]+1, (uint8_t*)bat0_icon16x16, TFT_RED);
+            break;
+          case 25:
+            drawIconToSprite(spr, icon_xpos[2], icon_ypos[2]+1, (uint8_t*)bat1_icon16x16, TFT_YELLOW);
+            break;
+          case 50:
+            drawIconToSprite(spr, icon_xpos[2], icon_ypos[2]+1, (uint8_t*)bat2_icon16x16, TFT_WHITE);
+            break;
+          case 75:
+            drawIconToSprite(spr, icon_xpos[2], icon_ypos[2]+1, (uint8_t*)bat3_icon16x16, TFT_LIGHTGREY);
+            break;
+          case 100:
+            drawIconToSprite(spr, icon_xpos[2], icon_ypos[2], (uint8_t*)plug_icon16x16, TFT_LIGHTGREY);
+            break;
+        }
+      }
+
+      // Draw log warning icon to sprite
+      if(err_log_ptr > 5) {
+        drawIconToSprite(spr, icon_xpos[0], icon_ypos[0], (uint8_t*)warning_icon16x16, TFT_YELLOW);
+      } else if(err_log_ptr > 0) {
+        drawIconToSprite(spr, icon_xpos[0], icon_ypos[0], (uint8_t*)warning_icon16x16, TFT_LIGHTGREY);
+      }
+
+      // Push sprite to LCD - instant update, no flicker!
+      spr->pushSprite(0, 0);
+
+      // Handle alarms and info line (this draws to LCD after sprite push)
+      // This handles alarm sounds, LED strip, and the bottom status bar
       handleAlarmsInfoLine(&ns);
-      drawBatteryStatus(icon_xpos[2], icon_ypos[2]);
-      drawLogWarningIcon();
     }
     break;
 
@@ -2649,6 +2837,36 @@ void setup() {
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.setTextSize(2);
     yield();
+
+    // Create page 3 sprite for flicker-free updates
+    // TFT_eSprite defaults to PSRAM when available, so check the correct memory pool
+    const size_t SPRITE_SIZE = 320 * 240 * 2;  // 150KB at 16-bit color
+    const size_t HEAP_MARGIN = 50 * 1024;      // 50KB safety margin
+    bool canCreateSprite = false;
+
+    if (psramFound()) {
+      // PSRAM available - TFT_eSprite will use it by default
+      size_t freePsram = ESP.getFreePsram();
+      Serial.print("Free PSRAM: "); Serial.println(freePsram);
+      canCreateSprite = (freePsram > SPRITE_SIZE + HEAP_MARGIN);
+    } else {
+      // No PSRAM - sprite will use internal heap
+      size_t freeHeap = ESP.getFreeHeap();
+      Serial.print("Free Heap (no PSRAM): "); Serial.println(freeHeap);
+      canCreateSprite = (freeHeap > SPRITE_SIZE + HEAP_MARGIN);
+    }
+
+    if (canCreateSprite) {
+      page3Sprite.setColorDepth(16);
+      if (page3Sprite.createSprite(320, 240)) {
+        page3SpriteCreated = true;
+        Serial.println("Page 3 sprite created for flicker-free rendering");
+      } else {
+        Serial.println("Failed to create page 3 sprite");
+      }
+    } else {
+      Serial.println("Skipping page 3 sprite - insufficient memory");
+    }
 
     # ifdef ARDUINO_M5STACK_Core2
       Serial.println("M5Stack CORE2 code starting");
@@ -2876,6 +3094,9 @@ void setup() {
     dispPage = cfg.default_page;
     setPageIconPos(dispPage);
 
+    // Set initial brightness based on day/night mode (now that WiFi/NTP time is available)
+    updateDayNightBrightness();
+
     // stat startup time
     msStart = millis();
 
@@ -2904,6 +3125,9 @@ void loop() {
     }
     // Serial.printf("sensorDifSec = %d\r\n", sensorDifSec);
     if(millis()-msCount>15000) {
+      // Check and update brightness based on day/night mode (every 15s)
+      updateDayNightBrightness();
+
       /* if(dispPage==2)
         M5.Lcd.drawLine(osx, osy, 160, 111, TFT_BLACK); // erase seconds hand while updating data
       */

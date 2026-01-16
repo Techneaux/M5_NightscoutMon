@@ -54,6 +54,12 @@ struct tConfig {
   int micro_dot_pHAT = 0; // 0 = off, 1 = ON (display SGV and DELTA on I2C Pimoroni Micro Dot pHAT coonected to pins 21+22)
   int info_line = 1; // 0 = sensor info, 1 = button function icons, 2 = loop info + basal
   int brightness1, brightness2, brightness3;
+  int auto_brightness = 0; // 0 = off, 1 = auto day/night brightness switching
+  int brightness_day = 50; // default brightness during day hours (1-100)
+  int brightness_night = 10; // default brightness during night hours (1-100)
+  int day_start_hour = 7; // hour when day starts (0-23)
+  int night_start_hour = 22; // hour when night starts (0-23)
+  int stale_data_alert_min = 10; // minutes before showing stale data alert on page 3
   int date_format = 0; // 0 = dd.mm., 1 = MM/DD
   int time_format = 0; // 0 = 24 Hours, 1 = am/pm
   int display_rotation = 1; // 1 = buttons down, 3 = buttons up, 5 = mirror buttons up, 7 = mirror buttons down
