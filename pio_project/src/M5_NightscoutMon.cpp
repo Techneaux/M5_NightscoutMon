@@ -2666,7 +2666,7 @@ void draw_page() {
 
       // Draw trend arrow to sprite (dynamically positioned based on text width)
       int tw = spr->textWidth(sensSgvStr);
-      int arrowX = 100 + (tw / 2) + 15;
+      int arrowX = 100 + (tw / 2) + 25;
       if(ns.arrowAngle != 180) {
         drawArrowToSprite(spr, arrowX, 55, 10, ns.arrowAngle + 85, 40, 40, glColor);
       }
