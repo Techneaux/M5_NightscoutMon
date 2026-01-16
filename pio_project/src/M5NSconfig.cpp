@@ -89,6 +89,9 @@ void readConfigFromFlash(tConfig *cfg) {
     cfg->brightness2 = prefs.getInt("brightness2", 100);
     cfg->brightness3 = prefs.getInt("brightness3", 10);
     cfg->auto_brightness = prefs.getInt("auto_bright", 0);
+    if (cfg->auto_brightness != 0 && cfg->auto_brightness != 1) {
+      cfg->auto_brightness = 0;
+    }
     cfg->brightness_day = prefs.getInt("bright_day", 50);
     cfg->brightness_night = prefs.getInt("bright_night", 10);
     cfg->day_start_hour = prefs.getInt("day_start_hr", 7);
@@ -761,6 +764,9 @@ void readConfiguration(const char *iniFilename, tConfig *cfg) {
   if (ini.getValue("config", "auto_brightness", buffer, bufferLen)) {
     Serial.print("auto_brightness = ");
     cfg->auto_brightness = atoi(buffer);
+    if (cfg->auto_brightness != 0 && cfg->auto_brightness != 1) {
+      cfg->auto_brightness = 0;
+    }
     Serial.println(cfg->auto_brightness);
   }
   else {
@@ -819,7 +825,7 @@ void readConfiguration(const char *iniFilename, tConfig *cfg) {
   if (ini.getValue("config", "stale_data_alert_min", buffer, bufferLen)) {
     Serial.print("stale_data_alert_min = ");
     cfg->stale_data_alert_min = atoi(buffer);
-    if(cfg->stale_data_alert_min<1)
+    if(cfg->stale_data_alert_min < 1 || cfg->stale_data_alert_min > 1440)
       cfg->stale_data_alert_min = 10;
     Serial.println(cfg->stale_data_alert_min);
   }

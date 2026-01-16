@@ -227,8 +227,9 @@ uint8_t lcdBrightness = 10;
 bool isDayMode = true; // Track current day/night mode for brightness switching
 bool brightnessManuallySet = false; // Track if user manually changed brightness
 
-// Sprite for flicker-free page 3 rendering (uses PSRAM on Core2)
+// Sprite for flicker-free page 3 rendering. PSRAM usage depends on TFT_eSprite and board config.
 TFT_eSprite page3Sprite = TFT_eSprite(&M5.Lcd);
+bool page3SpriteCreated = false;
 
 const char iniFilename[] = "/M5NS.INI";
 
@@ -306,6 +307,10 @@ void lcdSetBrightness(uint8_t brightness) {
 // Check if current hour is during day time
 // Returns true if current hour is between day_start_hour and night_start_hour
 bool isCurrentlyDay(int currentHour) {
+  // Edge case: if day_start equals night_start, always return true (always day mode)
+  if (cfg.day_start_hour == cfg.night_start_hour) {
+    return true;
+  }
   if(cfg.day_start_hour < cfg.night_start_hour) {
     // Normal case: day 7-22 means day is hours 7,8,9...21
     return (currentHour >= cfg.day_start_hour && currentHour < cfg.night_start_hour);
@@ -2610,6 +2615,17 @@ void draw_page() {
       // Simplified glucose display page with sprite double-buffering
       // Draws to off-screen sprite then pushes to LCD for flicker-free updates
 
+      // Fallback if sprite was not created (low memory)
+      if (!page3SpriteCreated) {
+        M5.Lcd.fillScreen(TFT_BLACK);
+        M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
+        M5.Lcd.setFreeFont(FSSB12);
+        M5.Lcd.setTextDatum(MC_DATUM);
+        M5.Lcd.drawString("Page 3 unavailable", 160, 100, GFXFF);
+        M5.Lcd.drawString("(low memory)", 160, 130, GFXFF);
+        break;
+      }
+
       TFT_eSprite* spr = &page3Sprite;
       spr->fillSprite(TFT_BLACK);  // Clear sprite (not visible yet)
       setPageIconPos(3);
@@ -2672,7 +2688,7 @@ void draw_page() {
         spr->setFreeFont(FSSB12);
         spr->setTextDatum(MC_DATUM);
         char staleMsg[32];
-        sprintf(staleMsg, "No data for %d min", sensorDifMin);
+        sprintf(staleMsg, "No data for %u min", sensorDifMin);
         spr->drawString(staleMsg, 160, 208, GFXFF);
       }
 
@@ -2822,10 +2838,35 @@ void setup() {
     M5.Lcd.setTextSize(2);
     yield();
 
-    // Create page 3 sprite for flicker-free updates (uses PSRAM on Core2)
-    page3Sprite.setColorDepth(16);
-    page3Sprite.createSprite(320, 240);
-    Serial.println("Page 3 sprite created for flicker-free rendering");
+    // Create page 3 sprite for flicker-free updates
+    // TFT_eSprite defaults to PSRAM when available, so check the correct memory pool
+    const size_t SPRITE_SIZE = 320 * 240 * 2;  // 150KB at 16-bit color
+    const size_t HEAP_MARGIN = 50 * 1024;      // 50KB safety margin
+    bool canCreateSprite = false;
+
+    if (psramFound()) {
+      // PSRAM available - TFT_eSprite will use it by default
+      size_t freePsram = ESP.getFreePsram();
+      Serial.print("Free PSRAM: "); Serial.println(freePsram);
+      canCreateSprite = (freePsram > SPRITE_SIZE + HEAP_MARGIN);
+    } else {
+      // No PSRAM - sprite will use internal heap
+      size_t freeHeap = ESP.getFreeHeap();
+      Serial.print("Free Heap (no PSRAM): "); Serial.println(freeHeap);
+      canCreateSprite = (freeHeap > SPRITE_SIZE + HEAP_MARGIN);
+    }
+
+    if (canCreateSprite) {
+      page3Sprite.setColorDepth(16);
+      if (page3Sprite.createSprite(320, 240)) {
+        page3SpriteCreated = true;
+        Serial.println("Page 3 sprite created for flicker-free rendering");
+      } else {
+        Serial.println("Failed to create page 3 sprite");
+      }
+    } else {
+      Serial.println("Skipping page 3 sprite - insufficient memory");
+    }
 
     # ifdef ARDUINO_M5STACK_Core2
       Serial.println("M5Stack CORE2 code starting");
