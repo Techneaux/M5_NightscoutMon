@@ -102,6 +102,9 @@ static const int WIFI_CONNECT_TIMEOUT_MS = 60000;
 static const int MAX_RETRIES = 3;
 static const int RETRY_DELAYS[] = {1000, 2000, 4000};  // Exponential backoff: 1s, 2s, 4s
 
+// Error log auto-expiry: errors older than this many minutes are removed
+#define ERROR_EXPIRY_MINUTES 30
+
 // Safe string append helper - prevents buffer overflow
 static inline void safeStrCat(char *dest, const char *src, size_t destSize) {
   size_t destLen = strlen(dest);
@@ -367,6 +370,35 @@ void addErrorLog(int code){
   err_log[err_log_ptr].err_code=code;
   err_log_ptr++;
   err_log_count++;
+}
+
+void expireOldErrors() {
+  if (err_log_ptr == 0) return;
+
+  struct tm now;
+  if (!getLocalTime(&now)) return;  // Can't check without valid time
+  time_t nowTime = time(NULL);
+
+  // Errors are chronological, scan from oldest
+  int expired = 0;
+  for (int i = 0; i < err_log_ptr; i++) {
+    time_t errTime = mktime(&err_log[i].err_time);
+    if ((nowTime - errTime) > (time_t)(ERROR_EXPIRY_MINUTES * 60)) {
+      expired++;
+    } else {
+      break;  // rest are newer
+    }
+  }
+
+  if (expired > 0) {
+    // Shift remaining entries to front
+    for (int i = 0; i < err_log_ptr - expired; i++) {
+      err_log[i].err_time = err_log[i + expired].err_time;
+      err_log[i].err_code = err_log[i + expired].err_code;
+    }
+    err_log_ptr -= expired;
+    // err_log_count intentionally NOT decremented (lifetime counter)
+  }
 }
 
 uint16_t crc16_update(uint16_t crc, uint8_t a)
@@ -3148,6 +3180,7 @@ void loop() {
         }
       }
       rcnt++;
+      expireOldErrors();
       draw_page();
       msCount = millis();  
       // Serial.print("msCount = "); Serial.println(msCount);
