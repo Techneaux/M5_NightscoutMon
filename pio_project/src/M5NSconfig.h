@@ -81,6 +81,7 @@ struct NSinfo {
   float sensSgvMgDl = 0;
   float sensSgv = 0;
   float last10sgv[24];  // 2 hours of readings (24 x 5min)
+  time_t last10sgv_time[24] = {0};  // epoch seconds per reading; 0 = empty slot
   bool is_xDrip = 0;  
   bool is_Sugarmate = 0;  
   int arrowAngle = 180;

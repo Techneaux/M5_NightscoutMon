@@ -121,6 +121,11 @@ static const int LARGE_GRAPH_WIDTH = 268;  // 294 - 26
 static const int LARGE_GRAPH_Y_TOP = 115;
 static const int LARGE_GRAPH_Y_BOTTOM = 195;
 
+// time(NULL) returns 0/small values until NTP sets the system clock. Anything
+// past 2023-11-14 epoch means the clock is real; below this we fall back to
+// ns->sensTime so the graph still renders during the cold-boot window.
+static const time_t MIN_VALID_EPOCH = 1700000000;
+
 // The UDP library class
 WiFiUDP udp;
 #define UDP_TX_PACKET_MAX_SIZE 2048
@@ -1139,31 +1144,30 @@ void drawLargeGraph(struct NSinfo *ns) {
   if(y_low >= LARGE_GRAPH_Y_TOP && y_low <= LARGE_GRAPH_Y_BOTTOM) M5.Lcd.drawLine(LARGE_GRAPH_FRAME_LEFT, y_low, LARGE_GRAPH_FRAME_RIGHT, y_low, TFT_DARKGREY);
   if(y_high >= LARGE_GRAPH_Y_TOP && y_high <= LARGE_GRAPH_Y_BOTTOM) M5.Lcd.drawLine(LARGE_GRAPH_FRAME_LEFT, y_high, LARGE_GRAPH_FRAME_RIGHT, y_high, TFT_DARKGREY);
 
-  // Draw data points - 24 points (2 hours) spread across graph width
-  for(i=23; i>=0; i--) {
+  // Plot dots by real time so outages render as gaps (same logic as the sprite version).
+  const time_t graphSpanSec = 2 * 60 * 60;
+  time_t nowEpoch = time(NULL);
+  time_t newestTime = (nowEpoch > MIN_VALID_EPOCH) ? nowEpoch : ns->sensTime;
+  time_t oldestVisible = newestTime - graphSpanSec;
+
+  for(i=0; i<24; i++) {
+    glk = ns->last10sgv[i];
+    time_t t = ns->last10sgv_time[i];
+
+    if(glk == 0) continue;
+    if(t == 0) continue;
+    if(t < oldestVisible || t > newestTime) continue;
+
+    if(glk > graphMax) glk = graphMax;
+    else if(glk < graphMin) glk = graphMin;
+
     sgvColor = TFT_GREEN;
-    glk = *(ns->last10sgv+23-i);
+    if(glk < cfg.red_low || glk > cfg.red_high) sgvColor = TFT_RED;
+    else if(glk < cfg.yellow_low || glk > cfg.yellow_high) sgvColor = TFT_YELLOW;
 
-    // Clamp to display range (40-400 mg/dL)
-    if(glk > graphMax) {
-      glk = graphMax;
-    } else if(glk < graphMin) {
-      glk = graphMin;
-    }
-
-    // Color based on thresholds
-    if(glk < cfg.red_low || glk > cfg.red_high) {
-      sgvColor = TFT_RED;
-    } else if(glk < cfg.yellow_low || glk > cfg.yellow_high) {
-      sgvColor = TFT_YELLOW;
-    }
-
-    // Draw point if valid (non-zero)
-    if(*(ns->last10sgv+23-i) != 0) {
-      int x = LARGE_GRAPH_X_START + (i * LARGE_GRAPH_WIDTH) / 23;  // evenly spaced within borders
-      int y = LARGE_GRAPH_Y_BOTTOM - (int)((glk - graphMin) * graphScale);
-      M5.Lcd.fillCircle(x, y, 3, sgvColor);  // 3px radius circles
-    }
+    int x = LARGE_GRAPH_X_START + (int)(((long)(t - oldestVisible) * LARGE_GRAPH_WIDTH) / graphSpanSec);
+    int y = LARGE_GRAPH_Y_BOTTOM - (int)((glk - graphMin) * graphScale);
+    M5.Lcd.fillCircle(x, y, 3, sgvColor);
   }
 }
 
@@ -1189,28 +1193,31 @@ void drawLargeGraphToSprite(TFT_eSprite* spr, struct NSinfo *ns) {
   if(y_low >= LARGE_GRAPH_Y_TOP && y_low <= LARGE_GRAPH_Y_BOTTOM) spr->drawLine(LARGE_GRAPH_FRAME_LEFT, y_low, LARGE_GRAPH_FRAME_RIGHT, y_low, TFT_DARKGREY);
   if(y_high >= LARGE_GRAPH_Y_TOP && y_high <= LARGE_GRAPH_Y_BOTTOM) spr->drawLine(LARGE_GRAPH_FRAME_LEFT, y_high, LARGE_GRAPH_FRAME_RIGHT, y_high, TFT_DARKGREY);
 
-  // Draw data points
-  for(i=23; i>=0; i--) {
+  // Plot dots by real time so outages render as gaps. time(NULL) is non-blocking;
+  // getLocalTime() can stall up to 5s waiting on NTP, which we must not do here.
+  const time_t graphSpanSec = 2 * 60 * 60;
+  time_t nowEpoch = time(NULL);
+  time_t newestTime = (nowEpoch > MIN_VALID_EPOCH) ? nowEpoch : ns->sensTime;
+  time_t oldestVisible = newestTime - graphSpanSec;
+
+  for(i=0; i<24; i++) {
+    glk = ns->last10sgv[i];
+    time_t t = ns->last10sgv_time[i];
+
+    if(glk == 0) continue;
+    if(t == 0) continue;
+    if(t < oldestVisible || t > newestTime) continue;
+
+    if(glk > graphMax) glk = graphMax;
+    else if(glk < graphMin) glk = graphMin;
+
     sgvColor = TFT_GREEN;
-    glk = *(ns->last10sgv+23-i);
+    if(glk < cfg.red_low || glk > cfg.red_high) sgvColor = TFT_RED;
+    else if(glk < cfg.yellow_low || glk > cfg.yellow_high) sgvColor = TFT_YELLOW;
 
-    if(glk > graphMax) {
-      glk = graphMax;
-    } else if(glk < graphMin) {
-      glk = graphMin;
-    }
-
-    if(glk < cfg.red_low || glk > cfg.red_high) {
-      sgvColor = TFT_RED;
-    } else if(glk < cfg.yellow_low || glk > cfg.yellow_high) {
-      sgvColor = TFT_YELLOW;
-    }
-
-    if(*(ns->last10sgv+23-i) != 0) {
-      int x = LARGE_GRAPH_X_START + (i * LARGE_GRAPH_WIDTH) / 23;
-      int y = LARGE_GRAPH_Y_BOTTOM - (int)((glk - graphMin) * graphScale);
-      spr->fillCircle(x, y, 3, sgvColor);
-    }
+    int x = LARGE_GRAPH_X_START + (int)(((long)(t - oldestVisible) * LARGE_GRAPH_WIDTH) / graphSpanSec);
+    int y = LARGE_GRAPH_Y_BOTTOM - (int)((glk - graphMin) * graphScale);
+    spr->fillCircle(x, y, 3, sgvColor);
   }
 }
 
@@ -1439,18 +1446,21 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
             for(int i=0; i<=23; i++) {
               ns->last10sgv[i]=JSONdoc[i]["sgv"];
               ns->last10sgv[i]/=18.0;
+              ns->last10sgv_time[i] = (time_t)(JSONdoc[i]["date"].as<long long>() / 1000);
             }
           } else {
             // Sugarmate values
             strcpy(ns->sensDev, "Sugarmate");
             ns->is_xDrip = 0;
             ns->sensSgv = JSONdoc["value"]; // get value of sensor measurement
-            time_t tmptime = JSONdoc["x"]; // time in milliseconds since 1970
+            time_t tmptime = JSONdoc["x"]; // epoch seconds (downstream sensTime*1000=rawtime and localtime_r usage confirm)
             if(ns->sensTime != tmptime) {
               for(int i=23; i>0; i--) { // add new value and shift buffer
                 ns->last10sgv[i]=ns->last10sgv[i-1];
+                ns->last10sgv_time[i]=ns->last10sgv_time[i-1];
               }
               ns->last10sgv[0] = ns->sensSgv;
+              ns->last10sgv_time[0] = tmptime;
               // char jdunits[100];
               // strcpy(jdunits, JSONdoc["units"]);
               // Serial.print("JSONdoc[units] = "); Serial.println(jdunits);
