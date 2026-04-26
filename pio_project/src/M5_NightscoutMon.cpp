@@ -121,6 +121,11 @@ static const int LARGE_GRAPH_WIDTH = 268;  // 294 - 26
 static const int LARGE_GRAPH_Y_TOP = 115;
 static const int LARGE_GRAPH_Y_BOTTOM = 195;
 
+// time(NULL) returns 0/small values until NTP sets the system clock. Anything
+// past 2023-11-14 epoch means the clock is real; below this we fall back to
+// ns->sensTime so the graph still renders during the cold-boot window.
+static const time_t MIN_VALID_EPOCH = 1700000000;
+
 // The UDP library class
 WiFiUDP udp;
 #define UDP_TX_PACKET_MAX_SIZE 2048
@@ -1142,7 +1147,7 @@ void drawLargeGraph(struct NSinfo *ns) {
   // Plot dots by real time so outages render as gaps (same logic as the sprite version).
   const time_t graphSpanSec = 2 * 60 * 60;
   time_t nowEpoch = time(NULL);
-  time_t newestTime = (nowEpoch > 1700000000) ? nowEpoch : ns->sensTime;
+  time_t newestTime = (nowEpoch > MIN_VALID_EPOCH) ? nowEpoch : ns->sensTime;
   time_t oldestVisible = newestTime - graphSpanSec;
 
   for(i=0; i<24; i++) {
@@ -1190,10 +1195,9 @@ void drawLargeGraphToSprite(TFT_eSprite* spr, struct NSinfo *ns) {
 
   // Plot dots by real time so outages render as gaps. time(NULL) is non-blocking;
   // getLocalTime() can stall up to 5s waiting on NTP, which we must not do here.
-  // Threshold 1700000000 (2023-11-14) detects "system clock not yet set".
   const time_t graphSpanSec = 2 * 60 * 60;
   time_t nowEpoch = time(NULL);
-  time_t newestTime = (nowEpoch > 1700000000) ? nowEpoch : ns->sensTime;
+  time_t newestTime = (nowEpoch > MIN_VALID_EPOCH) ? nowEpoch : ns->sensTime;
   time_t oldestVisible = newestTime - graphSpanSec;
 
   for(i=0; i<24; i++) {
@@ -1449,7 +1453,7 @@ int readNightscout(char *url, char *token, struct NSinfo *ns) {
             strcpy(ns->sensDev, "Sugarmate");
             ns->is_xDrip = 0;
             ns->sensSgv = JSONdoc["value"]; // get value of sensor measurement
-            time_t tmptime = JSONdoc["x"]; // time in milliseconds since 1970
+            time_t tmptime = JSONdoc["x"]; // epoch seconds (downstream sensTime*1000=rawtime and localtime_r usage confirm)
             if(ns->sensTime != tmptime) {
               for(int i=23; i>0; i--) { // add new value and shift buffer
                 ns->last10sgv[i]=ns->last10sgv[i-1];
